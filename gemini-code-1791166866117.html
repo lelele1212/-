@@ -1,0 +1,663 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>かせどり！上山まちめぐり - Pixel Game</title>
+<style>
+*{box-sizing:border-box}
+body{
+  margin:0;
+  background:#091422;
+  font-family:"Courier New", "Yu Gothic", sans-serif;
+  color:#fff;
+  user-select:none;
+  display:flex;
+  justify-content:center;
+  align-items:center;
+  min-height:100vh;
+}
+#wrap{
+  width:min(960px, 98vw);
+  background:#0b1d33;
+  border:6px solid #1c3b5e;
+  border-radius:12px;
+  box-shadow:0 0 20px rgba(0,0,0,0.8);
+  overflow:hidden;
+  position:relative;
+}
+#stage{position:relative; background:#000;}
+canvas{display:block; width:100%; height:auto; image-rendering:pixelated; image-rendering:crisp-edges;}
+
+#controls{
+  padding:12px 20px 16px;
+  background:#0a1728;
+  border-top:4px solid #1d3b5c;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+}
+.guide-box, .condition-box{
+  background:#0e243d;
+  border:3px solid #1d436a;
+  border-radius:8px;
+  padding:8px 14px;
+  font-size:13px;
+  color:#b0d3f8;
+  min-width:180px;
+}
+.guide-box div{margin-bottom:4px;}
+.guide-box span{color:#fff; font-weight:bold; background:#1c3d63; padding:2px 6px; border-radius:4px;}
+
+#step{
+  flex:1;
+  max-width:280px;
+  background:linear-gradient(to bottom, #186fcd, #0d4a8d);
+  border:4px solid #52aaff;
+  border-radius:10px;
+  color:#fff;
+  padding:12px 20px;
+  font:bold 22px "Courier New", sans-serif;
+  cursor:pointer;
+  box-shadow:0 6px #072a52, 0 0 10px rgba(35,131,200,0.5);
+  text-shadow:2px 2px #000;
+  transition:all 0.05s;
+}
+#step:active{transform:translateY(4px); box-shadow:0 2px #072a52;}
+
+.progress-bar-bg{width:100%; height:10px; background:#112133; border-radius:5px; overflow:hidden; margin-top:4px; border:1px solid #234c78;}
+.progress-bar-fill{height:100%; width:0%; background:linear-gradient(to right, #fcae1e, #ffe552);}
+
+#overlay{
+  position:absolute; inset:0;
+  background:rgba(5, 15, 27, 0.88);
+  display:flex; align-items:center; justify-content:center;
+  text-align:center; padding:20px; z-index:10;
+}
+.card{
+  max-width:550px; background:#0f243a; border:5px solid #5aa9fa;
+  border-radius:16px; box-shadow:0 0 30px #000; padding:24px;
+}
+.card h1{color:#ffd34e; font-size:30px; margin:0 0 12px; text-shadow:3px 3px #7a431f;}
+.card p{font-size:15px; line-height:1.7; color:#d2e7ff;}
+.start{
+  border:3px solid #fff; background:#e35d4f; color:#fff;
+  padding:12px 30px; font:bold 20px "Courier New"; cursor:pointer;
+  border-radius:8px; box-shadow:0 4px #852219; margin-top:10px;
+}
+.start:hover{background:#f46e60;}
+</style>
+</head>
+<body>
+
+<div id="wrap">
+  <div id="stage">
+    <canvas id="game" width="960" height="540"></canvas>
+    
+    <div id="overlay">
+      <div class="card">
+        <h1>かせどり！上山まちめぐり</h1>
+        <p>上山温泉の町民たちが次々と祝い水をかけるぞ！<br>
+        成功するほど<b>テンポが速くなり激しく</b>変化！<br>
+        <b>「カッ・カッ・カッ・カー！」</b>のリズムに合わせてステップしよう！</p>
+        <button class="start" id="start">▶ ゲームスタート</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="controls">
+    <div class="guide-box">
+      <div><span>SPACE</span> PC: SPACEキー</div>
+      <div><span>タップ</span> スマホ: ステップボタン</div>
+    </div>
+    
+    <button id="step">👣 ステップ！</button>
+
+    <div class="condition-box">
+      <div>クリア条件:</div>
+      <div style="color:#fff; font-weight:bold;">20回 正確にステップする</div>
+      <div style="text-align:right; margin-top:2px;" id="count-text">0 / 20</div>
+      <div class="progress-bar-bg"><div class="progress-bar-fill" id="progress"></div></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+ctx.imageSmoothingEnabled = false;
+
+const startBtn = document.getElementById("start");
+const stepBtn = document.getElementById("step");
+const overlay = document.getElementById("overlay");
+const countText = document.getElementById("count-text");
+const progressBar = document.getElementById("progress");
+
+let running = false;
+let startTime = 0;
+let lastBeat = -1;
+let score = 0, combo = 0, perfectCount = 0, lives = 4;
+let judgeText = "", judgeTimer = 0;
+let levelText = "LEVEL 1", levelBannerTimer = 0;
+let kasedoriJump = 0;
+let waterList = [], particles = [], bgConfetti = [];
+
+// 鳴き声吹き出し用
+let kasedoriVoice = "";
+let kasedoriVoiceTimer = 0;
+
+// 難易度制御パラメーター
+let beatInterval = 600;
+let currentLevel = 1;
+
+// 音声処理
+let audioCtx = null;
+function initAudio() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (audioCtx.state === "suspended") audioCtx.resume();
+}
+
+function playSound(type) {
+  if (!audioCtx) return;
+  const now = audioCtx.currentTime;
+
+  if (type === "ka") {
+    // 「カッ！」感のある打撃音声合成
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = "sawtooth";
+    osc.frequency.setValueAtTime(600, now);
+    osc.frequency.exponentialRampToValueAtTime(150, now + 0.07);
+    gain.gain.setValueAtTime(0.3, now);
+    gain.gain.linearRampToValueAtTime(0.01, now + 0.07);
+    osc.connect(gain); gain.connect(audioCtx.destination);
+    osc.start(now); osc.stop(now + 0.07);
+  } else if (type === "kaa") {
+    // 「カァー！」感のある高い鳴き声合成
+    const osc1 = audioCtx.createOscillator();
+    const osc2 = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc1.type = "sawtooth"; osc2.type = "square";
+    osc1.frequency.setValueAtTime(800, now);
+    osc1.frequency.exponentialRampToValueAtTime(350, now + 0.22);
+    osc2.frequency.setValueAtTime(805, now);
+    osc2.frequency.exponentialRampToValueAtTime(355, now + 0.22);
+    gain.gain.setValueAtTime(0.35, now);
+    gain.gain.linearRampToValueAtTime(0.01, now + 0.22);
+    osc1.connect(gain); osc2.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc1.start(now); osc2.start(now);
+    osc1.stop(now + 0.22); osc2.stop(now + 0.22);
+  } else if (type === "perfect") {
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = "triangle";
+    osc.frequency.setValueAtTime(880, now);
+    osc.frequency.setValueAtTime(1760, now + 0.08);
+    gain.gain.setValueAtTime(0.2, now);
+    gain.gain.linearRampToValueAtTime(0.01, now + 0.25);
+    osc.connect(gain); gain.connect(audioCtx.destination);
+    osc.start(now); osc.stop(now + 0.25);
+  } else if (type === "miss") {
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = "sawtooth";
+    osc.frequency.setValueAtTime(140, now);
+    osc.frequency.linearRampToValueAtTime(70, now + 0.15);
+    gain.gain.setValueAtTime(0.2, now);
+    gain.gain.linearRampToValueAtTime(0.01, now + 0.15);
+    osc.connect(gain); gain.connect(audioCtx.destination);
+    osc.start(now); osc.stop(now + 0.15);
+  } else if (type === "levelup") {
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(523, now);
+    osc.frequency.setValueAtTime(659, now + 0.08);
+    osc.frequency.setValueAtTime(783, now + 0.16);
+    osc.frequency.setValueAtTime(1046, now + 0.24);
+    gain.gain.setValueAtTime(0.25, now);
+    gain.gain.linearRampToValueAtTime(0.01, now + 0.4);
+    osc.connect(gain); gain.connect(audioCtx.destination);
+    osc.start(now); osc.stop(now + 0.4);
+  }
+}
+
+// 共通描画関数
+function rect(x,y,w,h,c){ctx.fillStyle=c;ctx.fillRect(Math.round(x),Math.round(y),w,h);}
+function circle(x,y,r,c,stroke=null,sw=1){
+  ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2);
+  if(c){ctx.fillStyle=c; ctx.fill();}
+  if(stroke){ctx.strokeStyle=stroke; ctx.lineWidth=sw; ctx.stroke();}
+}
+function text(s,x,y,size,c,align="center",font="bold"){
+  ctx.font = `${font} ${size}px 'Courier New', sans-serif`;
+  ctx.textAlign = align;
+  ctx.fillStyle = c;
+  ctx.fillText(s,x,y);
+}
+
+// 紙吹雪
+for(let i=0; i<30; i++){
+  bgConfetti.push({
+    x: Math.random()*960,
+    y: Math.random()*400,
+    r: Math.random()*3+2,
+    color: ["#ff7675", "#fdcb6e", "#74b9ff", "#55efc4", "#a29bfe"][Math.floor(Math.random()*5)],
+    vy: Math.random()*1 + 0.5,
+    vx: (Math.random()-0.5)*0.8
+  });
+}
+
+function drawBackground(){
+  rect(0,0,960,200,"#111e38");
+  rect(0,180,960,100,"#0b182e");
+
+  const cx = 480, cy = 20;
+  rect(cx-60, cy+60, 120, 70, "#192840");
+  rect(cx-40, cy+30, 80, 30, "#223554");
+  rect(cx-45, cy+10, 90, 20, "#192840");
+  rect(cx-15, cy-5,  30, 15, "#eef5fc");
+
+  function drawFlag(x, label){
+    rect(x, 100, 6, 200, "#d1d8e0");
+    rect(x>480?x-40:x+6, 110, 40, 120, "#ea2027");
+    rect(x>480?x-36:x+10, 115, 32, 110, "#ffffff");
+    text(label[0], x>480?x-20:x+26, 145, 18, "#1e272e");
+    text(label[1], x>480?x-20:x+26, 175, 18, "#1e272e");
+    text(label[2], x>480?x-20:x+26, 205, 18, "#1e272e");
+  }
+  drawFlag(60, "加勢鳥");
+  drawFlag(900, "初祝い");
+
+  const time = performance.now()/200;
+  for(let i=0; i<11; i++){
+    const lx = 80 + i * 80;
+    const ly = 25 + Math.sin(time + i)*3;
+    ctx.strokeStyle="#4b6584"; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.moveTo(lx, 0); ctx.lineTo(lx, ly); ctx.stroke();
+    circle(lx, ly+12, 12, (i%2==0)?"#e84118":"#fbc531");
+    rect(lx-8, ly, 16, 4, "#2f3640");
+    rect(lx-8, ly+20, 16, 4, "#2f3640");
+    text("祭", lx, ly+16, 10, "#ffffff");
+  }
+
+  for(let i=0; i<5; i++){
+    const vx = 200 + i*140 + Math.sin(time + i)*10;
+    circle(vx, 250 - (time*10 + i*30)%60, 15 + i*3, "rgba(255,255,255,0.08)");
+  }
+
+  rect(0, 270, 960, 160, "#4b5563");
+  for(let i=0; i<960; i+=50){
+    rect(i, 270, 2, 160, "#374151");
+  }
+  for(let j=270; j<430; j+=25){
+    rect(0, j, 960, 2, "#374151");
+  }
+
+  for(let i=0; i<16; i++){
+    const px = 20 + i*60;
+    const py = 410 + Math.sin(time*2 + i)*4;
+    circle(px, py, 14, "#1f2937");
+    rect(px-12, py+10, 24, 30, "#111827");
+    if(i%3==0){
+      rect(px-4, py-20, 8, 12, "#1f2937");
+    }
+  }
+
+  bgConfetti.forEach(c => {
+    c.y += c.vy; c.x += c.vx;
+    if(c.y > 420) c.y = 0;
+    circle(c.x, c.y, c.r, c.color);
+  });
+}
+
+function drawKasedori(){
+  const bob = Math.sin(performance.now()/120)*4 - kasedoriJump;
+  const x = 480, y = 310 + bob;
+
+  circle(x, y, 42, "#f1c258");
+  rect(x-46, y-20, 92, 50, "#e0ab37");
+  rect(x-38, y+10, 76, 40, "#c99222");
+
+  circle(x, y-25, 28, "#fff");
+  rect(x-6, y-60, 12, 14, "#e03322");
+  rect(x-2, y-65, 8, 8, "#f05545");
+  rect(x-8, y-26, 16, 10, "#f29d13");
+  circle(x-12, y-30, 3, "#000"); circle(x+12, y-30, 3, "#000");
+  text("u", x-12, y-33, 12, "#000"); text("u", x+12, y-33, 12, "#000");
+
+  rect(x-25, y+5, 50, 30, "#1e3a5f");
+  rect(x-20, y+10, 40, 6, "#ffffff");
+
+  rect(x-35, y, 12, 12, "#f1c258"); rect(x+23, y, 12, 12, "#f1c258");
+  rect(x-12, y+45, 8, 14, "#804c1e"); rect(x+4, y+45, 8, 14, "#804c1e");
+
+  // 鳴き声吹き出し描画
+  if(kasedoriVoiceTimer > 0){
+    const bx = x + 40, by = y - 65;
+    rect(bx-30, by-20, 70, 30, "#ffffff");
+    circle(bx-25, by-5, 15, "#ffffff");
+    circle(bx+35, by-5, 15, "#ffffff");
+    text(kasedoriVoice, bx, by, 18, "#e03322", "center", "bold");
+  }
+
+  if(judgeTimer > 0){
+    const col = judgeText==="PERFECT!" ? "#ffe45b" : (judgeText==="GREAT" ? "#7be0ff" : "#ff5252");
+    text(judgeText, x, y-85, 30, col, "center", "bold");
+  }
+
+  if(levelBannerTimer > 0){
+    text(`SPEED UP! ${levelText}`, 480, 180, 28, "#facc15", "center", "bold");
+  }
+}
+
+const people = [
+  {x: 160, y: 320, flip: false, color: "#c94034"},
+  {x: 270, y: 340, flip: false, color: "#2c5e8a"},
+  {x: 690, y: 340, flip: true,  color: "#2c5e8a"},
+  {x: 800, y: 320, flip: true,  color: "#b8477a"}
+];
+
+function drawPeople(){
+  people.forEach(p => {
+    ctx.save();
+    ctx.translate(p.x, p.y);
+    if(p.flip) ctx.scale(-1, 1);
+
+    rect(-15, -10, 30, 45, p.color);
+    rect(-12, 35, 10, 20, "#1f2a38"); rect(2, 35, 10, 20, "#1f2a38");
+    circle(0, -25, 18, "#fccb96");
+    rect(-18, -40, 36, 18, "#2b1c14");
+    rect(-16, 10, 32, 8, "#fff");
+    rect(15, -5, 18, 16, "#804c1e");
+    rect(13, -8, 22, 4, "#a6682e");
+
+    ctx.restore();
+  });
+}
+
+function drawWater(){
+  waterList.forEach(w => {
+    ctx.save();
+    ctx.strokeStyle = "#00d2d3";
+    ctx.lineWidth = 7;
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(w.x, w.y);
+    ctx.quadraticCurveTo((w.startX+w.targetX)/2, Math.min(w.startY, w.targetY)-60, w.targetX, w.targetY);
+    ctx.stroke();
+
+    circle(w.x, w.y, 9, "#48dbfb");
+    circle(w.x, w.y, 4, "#fff");
+    ctx.restore();
+  });
+}
+
+function drawUI(){
+  rect(15, 12, 260, 50, "#0e2d4d");
+  circle(35, 37, 22, "#f1c258");
+  text("かせどり", 155, 33, 18, "#fcae1e", "center");
+  text(levelText, 155, 53, 13, "#facc15", "center");
+
+  for(let i=0; i<4; i++){
+    const hx = 30 + i * 28, hy = 75;
+    const col = i < lives ? "#ef4444" : "#334155";
+    text("♥", hx, hy, 22, col);
+  }
+
+  rect(740, 12, 205, 80, "#0c2036");
+  text("スコア", 760, 38, 14, "#94a3b8", "left");
+  text(String(score).padStart(6, '0'), 930, 42, 24, "#ffffff", "right");
+  text("コンボ", 760, 74, 14, "#94a3b8", "left");
+  text(String(combo), 930, 78, 26, "#facc15", "right");
+
+  const barY = 470;
+  rect(20, barY-35, 920, 65, "#0b1a2d");
+  
+  rect(30, barY-25, 210, 24, "#17375e");
+  text("♪ カッ・カッ・カッ・カァー！", 135, barY-8, 12, "#60a5fa");
+
+  rect(40, barY+10, 880, 6, "#1e4976");
+
+  const beatTime = (performance.now() - startTime) / beatInterval;
+  const currentBeat = Math.floor(beatTime) % 4;
+
+  for(let i=0; i<4; i++){
+    const cx = 300 + i * 160;
+    const isActive = (i === currentBeat);
+    circle(cx, barY+13, 16, isActive ? "#0284c7" : "#0f2b48", isActive ? "#38bdf8" : "#1e4976", 3);
+    circle(cx, barY+13, 8, isActive ? "#e0f2fe" : "#1e3a5f");
+
+    if(isActive && i === 3){
+      circle(cx, barY+13, 24, null, "#facc15", 3);
+    }
+  }
+}
+
+function throwWaterMultiRandom(){
+  let maxCount = 2;
+  if(currentLevel === 2) maxCount = 3;
+  if(currentLevel === 3) maxCount = 4;
+
+  const count = Math.floor(Math.random() * maxCount) + 1;
+  const shuffled = [...people].sort(() => Math.random() - 0.5);
+  const selected = shuffled.slice(0, count);
+
+  selected.forEach(p => {
+    waterList.push({
+      startX: p.x, startY: p.y - 10,
+      targetX: 480, targetY: 310,
+      x: p.x, y: p.y - 10,
+      progress: 0
+    });
+  });
+}
+
+function checkDifficultyUpdate(){
+  let newLevel = 1;
+  if(perfectCount >= 13){
+    newLevel = 3;
+  } else if(perfectCount >= 6){
+    newLevel = 2;
+  }
+
+  if(newLevel !== currentLevel){
+    currentLevel = newLevel;
+    if(currentLevel === 2){
+      beatInterval = 520;
+      levelText = "LEVEL 2";
+    } else if(currentLevel === 3){
+      beatInterval = 440;
+      levelText = "MAX LEVEL!";
+    }
+    levelBannerTimer = 45;
+    playSound("levelup");
+  }
+}
+
+function update(){
+  const now = performance.now();
+  const beatTime = (now - startTime) / beatInterval;
+  const beat = Math.floor(beatTime);
+
+  if(beat !== lastBeat){
+    lastBeat = beat;
+    const bIndex = beat % 4;
+    
+    if(bIndex === 3){
+      playSound("kaa");
+      kasedoriVoice = "カァー！";
+      kasedoriVoiceTimer = 18;
+    } else {
+      playSound("ka");
+      kasedoriVoice = "カッ！";
+      kasedoriVoiceTimer = 12;
+    }
+
+    if(bIndex === 1){
+      throwWaterMultiRandom();
+    }
+  }
+
+  const moveSpeed = 0.04 * (600 / beatInterval);
+
+  for(let i=waterList.length-1; i>=0; i--){
+    let w = waterList[i];
+    w.progress += moveSpeed; 
+    w.x = w.startX + (w.targetX - w.startX) * w.progress;
+    w.y = w.startY + (w.targetY - w.startY) * w.progress;
+
+    if(w.progress >= 1.40){
+      waterList.splice(i, 1);
+      combo = 0;
+      lives = Math.max(0, lives - 1);
+      judgeText = "MISS";
+      judgeTimer = 22;
+      playSound("miss");
+      if(lives <= 0) finish(false);
+    }
+  }
+
+  for(let i=particles.length-1; i>=0; i--){
+    let p = particles[i];
+    p.x += p.vx; p.y += p.vy; p.vy += 0.5; p.life--;
+    if(p.life <= 0) particles.splice(i, 1);
+  }
+
+  if(kasedoriJump > 0) kasedoriJump *= 0.8;
+  if(judgeTimer > 0) judgeTimer--;
+  if(levelBannerTimer > 0) levelBannerTimer--;
+  if(kasedoriVoiceTimer > 0) kasedoriVoiceTimer--;
+}
+
+function spawnSplash(){
+  for(let i=0; i<30; i++){
+    particles.push({
+      x: 480, y: 300,
+      vx: (Math.random()-0.5)*18,
+      vy: (Math.random()-0.8)*16,
+      life: 22
+    });
+  }
+}
+
+function step(){
+  if(!running) return;
+  initAudio();
+
+  let minDiff = 999;
+  let targetProgress = -1;
+
+  for(let i=0; i<waterList.length; i++){
+    let diff = Math.abs(1.0 - waterList[i].progress);
+    if(diff < minDiff){
+      minDiff = diff;
+      targetProgress = waterList[i].progress;
+    }
+  }
+
+  let hitCount = 0;
+  if(targetProgress >= 0.60 && targetProgress <= 1.38){
+    for(let i=waterList.length-1; i>=0; i--){
+      if(Math.abs(waterList[i].progress - targetProgress) < 0.25){
+        waterList.splice(i, 1);
+        hitCount++;
+      }
+    }
+  }
+
+  if(hitCount > 0){
+    kasedoriJump = 15;
+
+    if(targetProgress >= 0.85 && targetProgress <= 1.20){
+      score += 120 * hitCount; combo++; perfectCount++;
+      judgeText = "PERFECT!";
+      playSound("perfect");
+      spawnSplash();
+      checkDifficultyUpdate();
+    } else {
+      score += 60 * hitCount; combo++;
+      judgeText = "GREAT";
+      playSound("perfect");
+    }
+  } else {
+    combo = 0;
+    lives = Math.max(0, lives - 1);
+    judgeText = "MISS";
+    playSound("miss");
+  }
+
+  judgeTimer = 22;
+  
+  countText.textContent = `${perfectCount} / 20`;
+  progressBar.style.width = `${Math.min(100, (perfectCount/20)*100)}%`;
+
+  if(perfectCount >= 20){
+    finish(true);
+  } else if(lives <= 0){
+    finish(false);
+  }
+}
+
+function finish(isClear){
+  running = false;
+  overlay.style.display = "flex";
+  overlay.innerHTML = `
+    <div class="card">
+      <h1>${isClear ? "★ クリア達成！ ★" : "ゲームオーバー"}</h1>
+      <p>${isClear ? "上山の祝い水を完璧に受け止めた！<br>商売繁盛・火の用心！" : "水を受け止めきれなかった…"}</p>
+      <p style="font-size:22px; color:#ffd34e;">SCORE: ${String(score).padStart(6, '0')}</p>
+      <button class="start" id="again">▶ もう一度遊ぶ</button>
+    </div>
+  `;
+  document.getElementById("again").onclick = startGame;
+}
+
+function loop(){
+  if(!running) return;
+  update();
+  ctx.clearRect(0, 0, 960, 540);
+  drawBackground();
+  drawPeople();
+  drawKasedori();
+  drawWater();
+  
+  particles.forEach(p => circle(p.x, p.y, 4, "#a5f3fc"));
+  
+  drawUI();
+  requestAnimationFrame(loop);
+}
+
+function startGame(){
+  initAudio();
+  overlay.style.display = "none";
+  score = 0; combo = 0; perfectCount = 0; lives = 4;
+  beatInterval = 600; currentLevel = 1; levelText = "LEVEL 1";
+  waterList = []; particles = [];
+  countText.textContent = "0 / 20";
+  progressBar.style.width = "0%";
+  startTime = performance.now();
+  lastBeat = -1;
+  running = true;
+  requestAnimationFrame(loop);
+}
+
+startBtn.onclick = startGame;
+stepBtn.onclick = step;
+
+window.addEventListener("keydown", e => {
+  if(["Space", "Enter", "KeyZ"].includes(e.code)){
+    e.preventDefault();
+    step();
+  }
+});
+
+drawBackground();
+drawPeople();
+drawKasedori();
+drawUI();
+</script>
+</body>
+</html>
